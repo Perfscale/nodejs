@@ -1,0 +1,33 @@
+# Local e2e for the `nodejs` step library (RFC 009 process capability).
+# Steps only — the capability double opt-in and the `before:` install live
+# in node.config.yaml. Build first:
+#
+#   npm run build   # → ../nodejs.wasm relative to this file's examples dir
+#
+#   perfscale run -f examples/node.test.yaml -c examples/node.config.yaml
+#   (run from the repository root — `install-dir: .perfscale-tools/nodejs`
+#    is resolved against the process cwd)
+#
+# NOTE: process steps are orchestration (setup, fixtures, one-off checks),
+# not a high-RPS hot path — each invocation is a real host spawn.
+steps:
+  # Uses the exact node installed by the config's `before:` block.
+  - name: inline-script
+    use: lib/nodejs/exec
+    with:
+      node-path: "${{ config.setup.node-path }}"
+      script: console.log(`hello from node ${process.version}`)
+    outputs: said
+    check:
+      message_contains: hello from node v24.16.0
+
+  - name: install-exec-one-shot
+    use: lib/nodejs/install-exec
+    with:
+      node-version: 24.16.0
+      install-dir: .perfscale-tools/nodejs   # cache hit — no re-download
+      script: console.log(JSON.stringify(process.argv.slice(2)))
+      args: ["perfscale"]
+    outputs: combo
+    check:
+      message_contains: perfscale

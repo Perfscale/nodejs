@@ -1,0 +1,23 @@
+# Config side of the nodejs e2e: profile, library registration with the
+# process capability, the one-shot `before:` install, and the double opt-in.
+vus: 1
+duration: 1s
+seed: 42
+# Double opt-in for the process capability: these config gates AND
+# `capabilities: [process]` on the libraries entry below. Missing either
+# side, the engine refuses to load the component (fail-closed, like `net`).
+allow_library_capabilities: true
+allow_process_actions: true
+libraries:
+  - use: ../nodejs.wasm
+    capabilities: [process]
+before:
+  # Pinned exact version, checksum-verified against the official
+  # nodejs.org SHASUMS256.txt. Installs into a repo-local toolcache
+  # (gitignored); subsequent runs reuse it — nothing is re-downloaded.
+  - name: node
+    use: lib/nodejs/install
+    with:
+      node-version: 24.16.0
+      install-dir: .perfscale-tools/nodejs
+    outputs: setup              # → ${{ config.setup.node-path }} in test steps

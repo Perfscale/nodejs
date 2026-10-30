@@ -1,0 +1,20 @@
+{
+  "name": "@perfscale/library-nodejs",
+  "version": "0.1.0",
+  "description": "Trusted local Node.js steps for perfscale (RFC 009 process capability): install, exec, install-exec",
+  "license": "(MIT OR Apache-2.0)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "node ../sdk-step-authoring/ts/bin/perfscale-library-build.mjs --kind steps --process src/nodejs.ts -o nodejs.wasm",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "@perfscale/library-sdk": "file:../sdk-step-authoring/ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
