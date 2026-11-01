@@ -20,8 +20,9 @@ its contract, for example:
   guarantees a replacement environment; a bug that bypasses it matters).
 - The cache-idempotency or bad-archive cleanup deleting anything other than
   the downloaded `.tar.xz` archive.
-- Validation gaps that let crafted `with:` params alter the spawned argv in
-  undocumented ways.
+- Validation gaps that let crafted `with:` params or settings blocks
+  (extension / variables / library `with:`) alter the spawned argv or
+  environment in undocumented ways.
 
 ## What is out of scope
 

@@ -137,6 +137,43 @@ steps:
 Output merges install and exec results: `{ "path", "node-path", "version",
 "exit_code", "stdout", "stderr" }`.
 
+## Run settings (RFC 009)
+
+Every step knob may be set once for the whole run instead of repeated per
+step. Precedence (highest first):
+
+1. the step's explicit `with:` params
+2. the `nodejs:` config extension block (claimed via the component's config
+   schema — unknown keys fail the run)
+3. the `variables.nodejs` map
+4. the library entry's `with:` block
+5. the built-in defaults
+
+`env` maps merge in that same order (a step's `env` wins per key). Accepted
+settings keys: `node-version` (alias `version`), `install-dir`, `node-path`
+(alias `executable`), `working-directory` / `cwd`, `timeout_ms` /
+`timeoutMs`, `env`. Invalid blocks (unknown key, wrong type, relative
+`node-path`, bad version) are hard errors — at instantiation for the
+library `with:`, at step resolution for the rest.
+
+```yaml
+# perfscale.config.yaml
+nodejs:                      # config extension, validated against the schema
+  node-version: "24"
+  install-dir: .perfscale-tools/nodejs
+variables:
+  nodejs: { timeout_ms: 30000 }
+libraries:
+  - use: ./nodejs.wasm
+    capabilities: [process]
+    with: { env: { NODE_ENV: test } }   # lowest-precedence defaults
+steps:
+  - name: smoke
+    use: lib/nodejs/install-exec
+    with:
+      script: console.log(process.version)   # version/dir come from settings
+```
+
 ## Orchestration, not hot path
 
 Each step invocation is **real host process spawns** (and `install` may
