@@ -33,9 +33,11 @@ jobs:
       - name: Verify the pinned SDK commit
         working-directory: sdk-step-authoring
         run: test "$(git rev-parse HEAD)" = "$SDK_COMMIT"
-      - name: Install SDK build tooling (jco)
+      - name: Install and build SDK (dist + type declarations)
         working-directory: sdk-step-authoring/ts
-        run: npm ci
+        run: |
+          npm ci
+          npm run build
       - name: Install, typecheck, unit-test
         working-directory: repo
         run: |
