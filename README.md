@@ -30,8 +30,9 @@ scripts can do on the host, they do with the perfscale process's privileges.
   or override, string values only).
 - `install` never uses sudo and never mutates global state: everything
   lands under `install-dir` (default `/tmp/perfscale-toolcache/nodejs`).
-  It is idempotent — if `<install-dir>/node-v<VERSION>-linux-<ARCH>/bin/node
-  --version` succeeds, nothing is re-downloaded or re-installed, ever. On a
+  It is idempotent — if `<install-dir>/node-v<VERSION>-linux-<ARCH>/bin/node`
+  exists (`test -x`; the host import hard-errors on spawn-ENOENT) and
+  answers `--version`, nothing is re-downloaded or re-installed, ever. On a
   checksum mismatch only the downloaded archive is deleted; install trees
   are never `rm`'d.
 - `exec` path/`node-path` values are passed verbatim — this is a trusted
@@ -129,13 +130,50 @@ steps:
     use: lib/nodejs/install-exec
     with:
       node-version: 24.16.0
-      install-dir: .perfscale-tools/nodejs
+      install-dir: /tmp/perfscale-toolcache/nodejs   # absolute — exec requires an absolute node-path
       script: console.log("ok")
     outputs: combo
 ```
 
 Output merges install and exec results: `{ "path", "node-path", "version",
 "exit_code", "stdout", "stderr" }`.
+
+## Run settings (RFC 009)
+
+Every step knob may be set once for the whole run instead of repeated per
+step. Precedence (highest first):
+
+1. the step's explicit `with:` params
+2. the `nodejs:` config extension block (claimed via the component's config
+   schema — unknown keys fail the run)
+3. the `variables.nodejs` map
+4. the library entry's `with:` block
+5. the built-in defaults
+
+`env` maps merge in that same order (a step's `env` wins per key). Accepted
+settings keys: `node-version` (alias `version`), `install-dir`, `node-path`
+(alias `executable`), `working-directory` / `cwd`, `timeout_ms` /
+`timeoutMs`, `env`. Invalid blocks (unknown key, wrong type, relative
+`node-path`, bad version) are hard errors — at instantiation for the
+library `with:`, at step resolution for the rest.
+
+```yaml
+# perfscale.config.yaml
+nodejs:                      # config extension, validated against the schema
+  node-version: "24"
+  install-dir: /tmp/perfscale-toolcache/nodejs   # absolute — exec requires an absolute node-path
+variables:
+  nodejs: { timeout_ms: 30000 }
+libraries:
+  - use: ./nodejs.wasm
+    capabilities: [process]
+    with: { env: { NODE_ENV: test } }   # lowest-precedence defaults
+steps:
+  - name: smoke
+    use: lib/nodejs/install-exec
+    with:
+      script: console.log(process.version)   # version/dir come from settings
+```
 
 ## Orchestration, not hot path
 
@@ -150,7 +188,7 @@ before:
     use: lib/nodejs/install
     with:
       node-version: 24.16.0
-      install-dir: .perfscale-tools/nodejs
+      install-dir: /tmp/perfscale-toolcache/nodejs   # absolute — exec requires an absolute node-path
     outputs: setup        # → ${{ config.setup.node-path }} in test steps
 ```
 
@@ -165,10 +203,11 @@ $ npm run build        # → nodejs.wasm (needs the SDK bin, see below)
 $ perfscale run -f examples/node.test.yaml -c examples/node.config.yaml
 ```
 
-Run `perfscale` from the **repository root** — `install-dir:
-.perfscale-tools/nodejs` (gitignored) is resolved against the process cwd.
-The first run downloads Node.js 24.16.0 from nodejs.org; later runs reuse
-the cache.
+The first run downloads Node.js 24.16.0 from nodejs.org into the default
+toolcache (`/tmp/perfscale-toolcache/nodejs`); later runs reuse the cache.
+`install-dir` may be relative, but then the installed `node-path` is
+relative too and `exec` (which requires an absolute path) will refuse it —
+prefer absolute install dirs.
 
 ## Development
 

@@ -1,0 +1,78 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Immutable SDK commit (Perfscale/sdk-libraries, feat/wasm-step-sdk):
+  # defineSteps + --kind steps build + settings delivery.
+  SDK_COMMIT: 522cfdd590062652c04337e6dfdcfc1c2c79389e
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: repo
+      # The SDK is a file: sibling dependency (../sdk-step-authoring/ts);
+      # pin it to an exact public commit.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Perfscale/sdk-libraries
+          ref: feat/wasm-step-sdk
+          path: sdk-step-authoring
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Verify the pinned SDK commit
+        working-directory: sdk-step-authoring
+        run: test "$(git rev-parse HEAD)" = "$SDK_COMMIT"
+      - name: Install and build SDK (dist + type declarations)
+        working-directory: sdk-step-authoring/ts
+        run: |
+          npm ci
+          npm run build
+      - name: Install, typecheck, unit-test
+        working-directory: repo
+        run: |
+          npm install
+          npm run typecheck
+          npm test
+      - name: Build the WASM component
+        working-directory: repo
+        run: npm run build
+      - name: Inspect component imports/exports
+        working-directory: repo
+        run: ../sdk-step-authoring/ts/node_modules/.bin/jco wit nodejs.wasm
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nodejs-wasm
+          path: repo/nodejs.wasm
+          retention-days: 7
+
+  integration:
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: nodejs-wasm
+          path: .
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Perfscale v0.30.0 from source
+        run: |
+          git clone --depth 1 --branch v0.30.0 https://github.com/Perfscale/perfscale.git /tmp/perfscale-src
+          cargo build --release -p perfscale-cli --manifest-path /tmp/perfscale-src/Cargo.toml
+          cp /tmp/perfscale-src/target/release/perfscale "$GITHUB_WORKSPACE/perfscale"
+          "$GITHUB_WORKSPACE/perfscale" --version
+      - name: Run the example through the engine (settings-driven install + exec)
+        run: |
+          "$GITHUB_WORKSPACE/perfscale" run -f examples/node.test.yaml -c examples/node.config.yaml | tee run.log
+          grep -q 'hello from node v24.16.0' run.log

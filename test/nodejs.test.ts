@@ -59,16 +59,18 @@ function installHost(opts: {
   const arch = opts.arch ?? "x86_64";
   const version = opts.version ?? "24.16.0";
   const nodeArch = arch === "x86_64" ? "x64" : "arm64";
-  let nodeCalls = 0;
   return fakeExec((req) => {
     const argv = req.argv ?? [];
     if (req.executable === "/usr/bin/uname") {
       return ok(argv[0] === "-s" ? `${opts.os ?? "Linux"}\n` : `${arch}\n`);
     }
+    // The cache probe: ENOENT at spawn is a host error, so the component
+    // checks existence with test(1) before running the cached binary.
+    if (req.executable === "/usr/bin/test") {
+      return opts.cached ? ok() : { exitCode: 1, stdout: "", stderr: "" };
+    }
     if (req.executable.endsWith("/bin/node")) {
-      nodeCalls += 1;
-      if (opts.cached || nodeCalls > 1) return ok(`v${version}\n`);
-      return { exitCode: 1, stdout: "", stderr: "no such file" };
+      return ok(`v${version}\n`);
     }
     if (req.executable === "/usr/bin/curl") {
       if (argv.includes("-o")) {
@@ -277,6 +279,7 @@ describe("nodejs/install-exec", () => {
     const { calls, exec } = fakeExec((req) => {
       const argv = req.argv ?? [];
       if (req.executable === "/usr/bin/uname") return ok(argv[0] === "-s" ? "Linux\n" : "x86_64\n");
+      if (req.executable === "/usr/bin/test") return ok();
       if (req.executable.endsWith("/bin/node")) {
         return argv[0] === "--version" ? ok("v24.16.0\n") : ok("ran\n");
       }
@@ -315,6 +318,7 @@ describe("nodejs/install-exec", () => {
     const { exec } = fakeExec((req) => {
       const argv = req.argv ?? [];
       if (req.executable === "/usr/bin/uname") return ok(argv[0] === "-s" ? "Linux\n" : "x86_64\n");
+      if (req.executable === "/usr/bin/test") return ok();
       if (req.executable.endsWith("/bin/node")) {
         return argv[0] === "--version"
           ? ok("v24.16.0\n")
@@ -340,5 +344,168 @@ describe("nodejs/install-exec", () => {
     ]) {
       assert.throws(() => testStep(def, ctx(exec), "install-exec", p), StepError, JSON.stringify(p));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Settings (RFC 009): extensions[nodejs] > variables[nodejs] > library with
+// > built-in defaults; explicit step `with:` wins over everything.
+// ---------------------------------------------------------------------------
+
+function settingsCtx(
+  exec: HostExec | undefined,
+  settings: { extensions?: Record<string, unknown>; variables?: Record<string, unknown> },
+): StepCtx {
+  const c = ctx(exec);
+  c.settings = {
+    vus: null,
+    duration_ms: null,
+    seed: null,
+    stages: null,
+    arrival: null,
+    variables: settings.variables ?? {},
+    extensions: settings.extensions ?? {},
+  };
+  return c;
+}
+
+/** Reset library-level `with:` defaults so module state never leaks between tests. */
+function resetLibraryWith() {
+  def.init?.(null);
+}
+
+describe("nodejs settings", () => {
+  it("install takes node-version and install-dir from extensions[nodejs]", () => {
+    resetLibraryWith();
+    const { calls, exec } = installHost();
+    const res = testStep(
+      def,
+      settingsCtx(exec, { extensions: { nodejs: { "node-version": "24.16.0", "install-dir": "/opt/ext" } } }),
+      "install",
+      {},
+    );
+    assert.equal(res.success, true);
+    assert.equal(
+      (res.output as Record<string, unknown>)["node-path"],
+      "/opt/ext/node-v24.16.0-linux-x64/bin/node",
+    );
+    assert.ok(calls.some((c) => c.argv?.includes("/opt/ext/.node-v24.16.0-linux-x64.tar.xz")));
+  });
+
+  it("explicit step params beat the run extension", () => {
+    resetLibraryWith();
+    const { exec } = installHost();
+    const res = testStep(
+      def,
+      settingsCtx(exec, { extensions: { nodejs: { "install-dir": "/opt/ext" } } }),
+      "install",
+      { "node-version": "24.16.0", "install-dir": "/opt/step" },
+    );
+    assert.equal(res.success, true);
+    assert.equal(
+      (res.output as Record<string, unknown>)["node-path"],
+      "/opt/step/node-v24.16.0-linux-x64/bin/node",
+    );
+  });
+
+  it("variables[nodejs] apply when no extension, library with applies below variables", () => {
+    def.init?.({ "install-dir": "/opt/lib", "node-version": "24.16.0" });
+    try {
+      const { exec } = installHost();
+      const res = testStep(
+        def,
+        settingsCtx(exec, { variables: { nodejs: { "install-dir": "/opt/vars" } } }),
+        "install",
+        {},
+      );
+      assert.equal(res.success, true);
+      assert.equal(
+        (res.output as Record<string, unknown>)["node-path"],
+        "/opt/vars/node-v24.16.0-linux-x64/bin/node",
+      );
+    } finally {
+      resetLibraryWith();
+    }
+  });
+
+  it("library with defaults apply when run settings are silent", () => {
+    def.init?.({ "install-dir": "/opt/lib", "node-version": "24.16.0" });
+    try {
+      const { exec } = installHost();
+      const res = testStep(def, settingsCtx(exec, {}), "install", {});
+      assert.equal(res.success, true);
+      assert.equal(
+        (res.output as Record<string, unknown>)["node-path"],
+        "/opt/lib/node-v24.16.0-linux-x64/bin/node",
+      );
+    } finally {
+      resetLibraryWith();
+    }
+  });
+
+  it("exec merges env in precedence order: step > extension > variables > library with", () => {
+    def.init?.({ env: { A: "lib", B: "lib", C: "lib", D: "lib" } });
+    try {
+      const { calls, exec } = fakeExec(() => ok());
+      const res = testStep(
+        def,
+        settingsCtx(exec, {
+          variables: { nodejs: { env: { B: "vars", C: "vars", D: "vars" } } },
+          extensions: { nodejs: { env: { C: "ext", D: "ext" }, cwd: "/ext/cwd", timeout_ms: 5000 } },
+        }),
+        "exec",
+        { script: "1", env: { D: "step" } },
+      );
+      assert.equal(res.success, true);
+      const run = calls.find((c) => c.executable.endsWith("/node"))!;
+      assert.equal(run.env?.A, "lib");
+      assert.equal(run.env?.B, "vars");
+      assert.equal(run.env?.C, "ext");
+      assert.equal(run.env?.D, "step");
+      assert.equal(run.env?.PATH, "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin");
+      assert.equal(run.cwd, "/ext/cwd");
+      assert.equal(run.timeoutMs, 5000);
+    } finally {
+      resetLibraryWith();
+    }
+  });
+
+  it("exec takes node-path from settings when the step omits it", () => {
+    resetLibraryWith();
+    const { calls, exec } = fakeExec(() => ok());
+    const res = testStep(
+      def,
+      settingsCtx(exec, { extensions: { nodejs: { "node-path": "/opt/node/bin/node" } } }),
+      "exec",
+      { script: "1" },
+    );
+    assert.equal(res.success, true);
+    assert.equal(calls[0]!.executable, "/opt/node/bin/node");
+  });
+
+  it("rejects invalid settings blocks", () => {
+    resetLibraryWith();
+    const { exec } = fakeExec(() => ok());
+    for (const settings of [
+      { extensions: { nodejs: { bogus: 1 } } },
+      { extensions: { nodejs: { env: { A: 1 } } } },
+      { extensions: { nodejs: { "node-path": "relative/node" } } },
+      { extensions: { nodejs: { "node-version": "nope" } } },
+      { extensions: { nodejs: { timeout_ms: -5 } } },
+      { variables: { nodejs: "not-an-object" } },
+      { variables: { nodejs: { cwd: "/a", "working-directory": "/b" } } },
+    ]) {
+      assert.throws(
+        () => testStep(def, settingsCtx(exec, settings), "exec", { script: "1" }),
+        StepError,
+        JSON.stringify(settings),
+      );
+    }
+  });
+
+  it("rejects an invalid library with block at init", () => {
+    assert.throws(() => def.init?.({ "install-dir": 42 }), StepError);
+    assert.throws(() => def.init?.({ unknown: true }), StepError);
+    resetLibraryWith();
   });
 });

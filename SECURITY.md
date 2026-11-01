@@ -14,14 +14,16 @@ its contract, for example:
   skipping the SHA-256 verification against the official `SHASUMS256.txt`
   before extraction.
 - Spawning anything other than the documented `/usr/bin/uname`,
-  `/usr/bin/mkdir`, `/usr/bin/curl`, `/usr/bin/sha256sum`, `/usr/bin/tar`,
-  `/usr/bin/rm` (the downloaded archive only), or the selected node binary.
+  `/usr/bin/test` (cache probe), `/usr/bin/mkdir`, `/usr/bin/curl`,
+  `/usr/bin/sha256sum`, `/usr/bin/tar`, `/usr/bin/rm` (the downloaded
+  archive only), or the selected node binary.
 - Leaking host environment variables into a child (the host import already
   guarantees a replacement environment; a bug that bypasses it matters).
 - The cache-idempotency or bad-archive cleanup deleting anything other than
   the downloaded `.tar.xz` archive.
-- Validation gaps that let crafted `with:` params alter the spawned argv in
-  undocumented ways.
+- Validation gaps that let crafted `with:` params or settings blocks
+  (extension / variables / library `with:`) alter the spawned argv or
+  environment in undocumented ways.
 
 ## What is out of scope
 
