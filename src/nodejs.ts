@@ -423,26 +423,35 @@ function runInstall(step: string, params: Record<string, unknown>, ctx: StepCtx)
   const path = `${installDir}/${artifact}`;
   const nodePath = `${path}/bin/node`;
 
-  // Idempotent: a working cached node is reused, never re-downloaded.
-  const cached = runHost(ctx, {
-    executable: nodePath,
-    argv: ["--version"],
+  // Idempotent: a working cached node is reused, never re-downloaded. The
+  // host import hard-errors on spawn-ENOENT, so probe with /usr/bin/test
+  // first and only run `node --version` when the binary exists.
+  const probe = runHost(ctx, {
+    executable: "/usr/bin/test",
+    argv: ["-x", nodePath],
     timeoutMs: SMALL_TIMEOUT_MS,
   });
-  if (cached.exitCode === 0) {
-    logs.push({ tag: "sys", line: `nodejs: ${artifact} already installed at ${path} (${cached.stdout.trim()})` });
-    return {
-      success: true,
-      output: {
-        path,
-        "node-path": nodePath,
-        version,
-        stdout: cached.stdout,
-        stderr: cached.stderr,
-        exit_code: 0,
-      },
-      logs,
-    };
+  if (probe.exitCode === 0) {
+    const cached = runHost(ctx, {
+      executable: nodePath,
+      argv: ["--version"],
+      timeoutMs: SMALL_TIMEOUT_MS,
+    });
+    if (cached.exitCode === 0) {
+      logs.push({ tag: "sys", line: `nodejs: ${artifact} already installed at ${path} (${cached.stdout.trim()})` });
+      return {
+        success: true,
+        output: {
+          path,
+          "node-path": nodePath,
+          version,
+          stdout: cached.stdout,
+          stderr: cached.stderr,
+          exit_code: 0,
+        },
+        logs,
+      };
+    }
   }
 
   const tarballUrl = `${DIST_BASE}/v${version}/${artifact}.tar.xz`;

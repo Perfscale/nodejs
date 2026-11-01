@@ -59,16 +59,18 @@ function installHost(opts: {
   const arch = opts.arch ?? "x86_64";
   const version = opts.version ?? "24.16.0";
   const nodeArch = arch === "x86_64" ? "x64" : "arm64";
-  let nodeCalls = 0;
   return fakeExec((req) => {
     const argv = req.argv ?? [];
     if (req.executable === "/usr/bin/uname") {
       return ok(argv[0] === "-s" ? `${opts.os ?? "Linux"}\n` : `${arch}\n`);
     }
+    // The cache probe: ENOENT at spawn is a host error, so the component
+    // checks existence with test(1) before running the cached binary.
+    if (req.executable === "/usr/bin/test") {
+      return opts.cached ? ok() : { exitCode: 1, stdout: "", stderr: "" };
+    }
     if (req.executable.endsWith("/bin/node")) {
-      nodeCalls += 1;
-      if (opts.cached || nodeCalls > 1) return ok(`v${version}\n`);
-      return { exitCode: 1, stdout: "", stderr: "no such file" };
+      return ok(`v${version}\n`);
     }
     if (req.executable === "/usr/bin/curl") {
       if (argv.includes("-o")) {
@@ -277,6 +279,7 @@ describe("nodejs/install-exec", () => {
     const { calls, exec } = fakeExec((req) => {
       const argv = req.argv ?? [];
       if (req.executable === "/usr/bin/uname") return ok(argv[0] === "-s" ? "Linux\n" : "x86_64\n");
+      if (req.executable === "/usr/bin/test") return ok();
       if (req.executable.endsWith("/bin/node")) {
         return argv[0] === "--version" ? ok("v24.16.0\n") : ok("ran\n");
       }
@@ -315,6 +318,7 @@ describe("nodejs/install-exec", () => {
     const { exec } = fakeExec((req) => {
       const argv = req.argv ?? [];
       if (req.executable === "/usr/bin/uname") return ok(argv[0] === "-s" ? "Linux\n" : "x86_64\n");
+      if (req.executable === "/usr/bin/test") return ok();
       if (req.executable.endsWith("/bin/node")) {
         return argv[0] === "--version"
           ? ok("v24.16.0\n")
