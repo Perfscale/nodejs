@@ -11,9 +11,10 @@ allow_process_actions: true
 # Run-level settings (RFC 009): the `nodejs` extension block is claimed by
 # the component's config schema; a step's explicit `with:` still wins over
 # it, `variables.nodejs` sits one level below it, and the library entry's
-# `with:` provides defaults below both.
+# `with:` provides defaults below both. install-dir stays at its (absolute)
+# built-in default — exec requires an absolute node-path.
 nodejs:
-  install-dir: .perfscale-tools/nodejs
+  timeout_ms: 60000
 variables:
   nodejs: { timeout_ms: 30000 }
 libraries:
@@ -21,9 +22,9 @@ libraries:
     capabilities: [process]
 before:
   # Pinned exact version, checksum-verified against the official
-  # nodejs.org SHASUMS256.txt. install-dir comes from the `nodejs:`
-  # extension block above; installs into a repo-local toolcache
-  # (gitignored); subsequent runs reuse it — nothing is re-downloaded.
+  # nodejs.org SHASUMS256.txt. Installs into the default toolcache
+  # (/tmp/perfscale-toolcache/nodejs); subsequent runs reuse it — nothing is
+  # re-downloaded.
   - name: node
     use: lib/nodejs/install
     with:
